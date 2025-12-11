@@ -1,0 +1,4 @@
+ExperimentTag,Description
+LogTrain19.log,train yolov11m-seg with HS ZB by finetuning
+LogTrain20.log, no mixture
+
