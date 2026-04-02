@@ -1,10 +1,12 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 import os
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 from ultralytics import YOLO
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     # Load a pretrained YOLO11n model
     model = YOLO("yolo11m-seg.pt")
 
