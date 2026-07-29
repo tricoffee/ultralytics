@@ -62,7 +62,9 @@ class YOLODataset(BaseDataset):
         use_keypoints (bool): Indicates if keypoints should be used for pose estimation.
         use_obb (bool): Indicates if oriented bounding boxes should be used.
         data (dict): Dataset configuration dictionary.
-        class_mapping (dict[int, int]): Mapping from label class IDs to model class IDs.
+        class_mappings (dict[int, int] | None): Mapping from source label class IDs to model class IDs.
+        source_names (dict[int, str]): Source label class names.
+        target_names (dict[int, str]): Model class names after mapping.
 
     Methods:
         cache_labels: Cache dataset labels, check images and read shapes.
@@ -94,42 +96,11 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
-        self.class_mapping = self._parse_class_mapping(self.data.get("class_mapping"))
+        self.class_mappings = self.data.get("class_mappings")
+        self.source_names = self.data.get("source_names", self.data["names"])
+        self.target_names = self.data.get("target_names", self.data["names"])
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
         super().__init__(*args, channels=self.data.get("channels", 3), **kwargs)
-
-    def _parse_class_mapping(self, mapping: dict | None) -> dict[int, int]:
-        """Normalize and validate a class ID mapping from the dataset YAML."""
-        if mapping is None:
-            return {}
-        if not isinstance(mapping, dict):
-            raise TypeError(f"Expected 'class_mapping' to be a dict in dataset YAML, but got {type(mapping).__name__}.")
-        try:
-            mapping = {int(old_id): int(new_id) for old_id, new_id in mapping.items()}
-        except (TypeError, ValueError) as e:
-            raise ValueError("'class_mapping' keys and values must be integer class IDs.") from e
-        if any(old_id < 0 or new_id < 0 for old_id, new_id in mapping.items()):
-            raise ValueError("'class_mapping' keys and values must be non-negative class IDs.")
-        nc = len(self.data["names"])
-        if any(new_id >= nc for new_id in mapping.values()):
-            raise ValueError(f"'class_mapping' target IDs must be smaller than the number of classes ({nc}).")
-        return mapping
-
-    def update_labels(self, include_class: list[int] | None) -> None:
-        """Remap label class IDs, then apply class filtering and single-class conversion."""
-        if self.class_mapping:
-            nc = len(self.data["names"])
-            for label in self.labels:
-                cls = label["cls"]
-                original_cls = cls.copy()
-                for old_id, new_id in self.class_mapping.items():
-                    cls[original_cls == old_id] = new_id
-                if len(cls) and cls.max() >= nc:
-                    raise ValueError(
-                        f"Class ID {int(cls.max())} remains after applying 'class_mapping', but the dataset has {nc} "
-                        "classes. Map every source class ID outside the target class range."
-                    )
-        super().update_labels(include_class)
 
     def cache_labels(self, path: Path = Path("./labels.cache")) -> dict:
         """Cache dataset labels, check images and read shapes.
@@ -193,7 +164,16 @@ class YOLODataset(BaseDataset):
         Returns:
             (str): Dataset cache hash.
         """
-        return get_hash(self.label_files + self.im_files)
+        paths = self.label_files + self.im_files
+        if self.class_mappings:
+            mapping_config = {
+                "source_names": self.source_names,
+                "target_names": self.target_names,
+                "class_mappings": self.class_mappings,
+            }
+            signature = json.dumps(mapping_config, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+            paths = [*paths, f"class_mapping_config:{signature}"]
+        return get_hash(paths)
 
     def scan_summary(self, nf: int, nm: int, ne: int, nc: int) -> str:
         """Return a one-line summary of scan counters for progress bars and cache logs.
@@ -221,16 +201,16 @@ class YOLODataset(BaseDataset):
                 "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                 "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
             )
-        num_cls = max(len(self.data["names"]), max(self.class_mapping, default=-1) + 1)
         return verify_image_label, zip(
             self.im_files,
             self.label_files,
             repeat(self.prefix),
             repeat(self.use_keypoints),
-            repeat(num_cls),
+            repeat(len(self.data["names"])),
             repeat(nkpt),
             repeat(ndim),
             repeat(self.single_cls),
+            repeat(self.class_mappings),
         )
 
     def result_to_label(self, result: list) -> tuple[dict | None, int, int, int, int, str]:

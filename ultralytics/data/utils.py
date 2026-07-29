@@ -269,7 +269,7 @@ def verify_image_mask(args: tuple) -> tuple:
 
 def verify_image_label(args: tuple) -> list:
     """Verify one image-label pair."""
-    im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim, single_cls = args
+    im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim, single_cls, class_mappings = args
     # Number (missing, found, empty, corrupt), message, segments, keypoints
     nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
     try:
@@ -297,6 +297,16 @@ def verify_image_label(args: tuple) -> list:
                 # Coordinate points check with 1% tolerance
                 assert points.max() <= 1.01, f"non-normalized or out of bounds coordinates {points[points > 1.01]}"
                 assert lb.min() >= -0.01, f"negative class labels or coordinate {lb[lb < -0.01]}"
+
+                if class_mappings:
+                    source_cls = lb[:, 0].copy()
+                    mapped_cls = np.full(len(lb), -1, dtype=np.int64)
+                    for source_id, target_id in class_mappings.items():
+                        mapped_cls[source_cls == source_id] = target_id
+                    if np.any(mapped_cls < 0):
+                        unknown_ids = sorted(np.unique(source_cls[mapped_cls < 0]).tolist())
+                        raise ValueError(f"source classes {unknown_ids} are missing from 'class_mappings'")
+                    lb[:, 0] = mapped_cls
 
                 # All labels
                 max_cls = 0 if single_cls else lb[:, 0].max()  # max label count
@@ -475,6 +485,49 @@ def convert_ndjson_to_yolo_if_needed(data: str | Path) -> str | Path:
     return data
 
 
+def prepare_class_mapping_data(data: dict) -> dict:
+    """Validate and normalize source-to-target class mappings."""
+    raw_mapping = data.get("class_mappings")
+    raw_target_names = data.get("target_names")
+
+    if raw_mapping is None:
+        return data
+    if raw_target_names is None:
+        raise ValueError("'target_names' is required when 'class_mappings' is configured.")
+    raw_source_names = data.get("source_names", data.get("names"))
+    if raw_source_names is None:
+        raise ValueError("'names' is required and must describe the source label classes.")
+    if not isinstance(raw_mapping, dict):
+        raise TypeError("'class_mappings' must be a dictionary.")
+
+    source_names = check_class_names(raw_source_names)
+    target_names = check_class_names(raw_target_names)
+    try:
+        class_mappings = {int(source_id): int(target_id) for source_id, target_id in raw_mapping.items()}
+    except (TypeError, ValueError) as e:
+        raise ValueError("'class_mappings' keys and values must be integer class IDs.") from e
+
+    source_ids, target_ids = set(source_names), set(target_names)
+    if set(class_mappings) != source_ids:
+        raise ValueError(
+            f"'class_mappings' must map every source class ID {sorted(source_ids)}, "
+            f"but its keys are {sorted(class_mappings)}."
+        )
+    mapped_target_ids = set(class_mappings.values())
+    if mapped_target_ids != target_ids:
+        raise ValueError(
+            f"'class_mappings' must cover every target class ID {sorted(target_ids)}, "
+            f"but its values cover {sorted(mapped_target_ids)}."
+        )
+
+    data["source_names"] = source_names
+    data["target_names"] = target_names
+    data["class_mappings"] = class_mappings
+    data["names"] = target_names
+    data["nc"] = len(target_names)
+    return data
+
+
 def check_det_dataset(dataset: str, autodownload: bool = True, split: str = "") -> dict[str, Any]:
     """Download, verify, and/or unzip a dataset if not found locally.
 
@@ -507,6 +560,7 @@ def check_det_dataset(dataset: str, autodownload: bool = True, split: str = "") 
 
     # Read YAML
     data = YAML.load(file, append_filename=True)  # dictionary
+    prepare_class_mapping_data(data)
 
     # Checks
     for k in "train", "val":

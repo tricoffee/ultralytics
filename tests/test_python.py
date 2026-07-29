@@ -1029,6 +1029,41 @@ def test_data_utils(tmp_path):
     assert len(np.unique(overlap)) == len(segments) + 1  # background + 130 instances, no uint8 wraparound
 
 
+def test_dataset_class_mappings(tmp_path):
+    """Test source classes are mapped before target class validation and label caching."""
+    from ultralytics.data.dataset import YOLODataset
+
+    root = tmp_path / "mapped"
+    images = root / "images" / "train"
+    labels = root / "labels" / "train"
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    Image.new("RGB", (16, 16)).save(images / "test.jpg")
+    (labels / "test.txt").write_text(
+        "0 0.2 0.2 0.1 0.1\n1 0.4 0.4 0.1 0.1\n2 0.6 0.6 0.1 0.1\n3 0.8 0.8 0.1 0.1\n"
+    )
+    data_yaml = root / "data.yaml"
+    data_yaml.write_text(
+        f"path: {root.as_posix()}\n"
+        "train: images/train\n"
+        "val: images/train\n"
+        "names: [ZW, YW, QJ, ShuPi]\n"
+        "target_names: [ZW, QJ, ShuPi]\n"
+        "class_mappings: {0: 0, 1: 0, 2: 1, 3: 2}\n"
+    )
+
+    data = check_det_dataset(data_yaml)
+    assert data["source_names"] == {0: "ZW", 1: "YW", 2: "QJ", 3: "ShuPi"}
+    assert data["names"] == data["target_names"] == {0: "ZW", 1: "QJ", 2: "ShuPi"}
+    assert data["nc"] == 3
+
+    dataset = YOLODataset(img_path=data["train"], data=data, imgsz=32, augment=False, hyp=DEFAULT_CFG)
+    assert sorted(dataset.labels[0]["cls"].ravel().tolist()) == [0.0, 0.0, 1.0, 2.0]
+    cache_hash = dataset.get_cache_hash()
+    dataset.target_names[0] = "renamed"
+    assert dataset.get_cache_hash() != cache_hash
+
+
 def test_safe_download_unzips_local_path_archive(tmp_path):
     """Test safe_download() unzips local archive paths without treating them like remote URLs."""
     dataset_dir = tmp_path / "coco8 local"
