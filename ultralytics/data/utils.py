@@ -298,15 +298,12 @@ def verify_image_label(args: tuple) -> list:
                 assert points.max() <= 1.01, f"non-normalized or out of bounds coordinates {points[points > 1.01]}"
                 assert lb.min() >= -0.01, f"negative class labels or coordinate {lb[lb < -0.01]}"
 
-                if class_mappings:
+                if class_mappings is not None:
                     source_cls = lb[:, 0].copy()
-                    mapped_cls = np.full(len(lb), -1, dtype=np.int64)
-                    for source_id, target_id in class_mappings.items():
-                        mapped_cls[source_cls == source_id] = target_id
-                    if np.any(mapped_cls < 0):
-                        unknown_ids = sorted(np.unique(source_cls[mapped_cls < 0]).tolist())
+                    unknown_ids = sorted(set(np.unique(source_cls).tolist()).difference(class_mappings))
+                    if unknown_ids:
                         raise ValueError(f"source classes {unknown_ids} are missing from 'class_mappings'")
-                    lb[:, 0] = mapped_cls
+                    lb[:, 0] = [class_mappings[source_id] for source_id in source_cls]
 
                 # All labels
                 max_cls = 0 if single_cls else lb[:, 0].max()  # max label count

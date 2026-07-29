@@ -1030,7 +1030,7 @@ def test_data_utils(tmp_path):
 
 
 def test_dataset_class_mappings(tmp_path):
-    """Test source classes are mapped before target class validation and label caching."""
+    """Test source classes are mapped before target class validation, deduplication, and label caching."""
     from ultralytics.data.dataset import YOLODataset
 
     root = tmp_path / "mapped"
@@ -1040,7 +1040,7 @@ def test_dataset_class_mappings(tmp_path):
     labels.mkdir(parents=True)
     Image.new("RGB", (16, 16)).save(images / "test.jpg")
     (labels / "test.txt").write_text(
-        "0 0.2 0.2 0.1 0.1\n1 0.4 0.4 0.1 0.1\n2 0.6 0.6 0.1 0.1\n3 0.8 0.8 0.1 0.1\n"
+        "0 0.2 0.2 0.1 0.1\n1 0.2 0.2 0.1 0.1\n2 0.6 0.6 0.1 0.1\n3 0.8 0.8 0.1 0.1\n"
     )
     data_yaml = root / "data.yaml"
     data_yaml.write_text(
@@ -1058,7 +1058,7 @@ def test_dataset_class_mappings(tmp_path):
     assert data["nc"] == 3
 
     dataset = YOLODataset(img_path=data["train"], data=data, imgsz=32, augment=False, hyp=DEFAULT_CFG)
-    assert sorted(dataset.labels[0]["cls"].ravel().tolist()) == [0.0, 0.0, 1.0, 2.0]
+    assert sorted(dataset.labels[0]["cls"].ravel().tolist()) == [0.0, 1.0, 2.0]
     cache_hash = dataset.get_cache_hash()
     dataset.target_names[0] = "renamed"
     assert dataset.get_cache_hash() != cache_hash
